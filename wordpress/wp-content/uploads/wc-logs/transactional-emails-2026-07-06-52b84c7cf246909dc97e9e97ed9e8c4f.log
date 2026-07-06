@@ -1,0 +1,2 @@
+2026-07-06T18:35:13+00:00 WARNING Email "customer_new_account" for user #2 failed to send: Não foi possível instanciar a função mail. CONTEXT: {"email_type":"customer_new_account","status":"failed","recipient":"junior.js87","user":2}
+2026-07-06T19:07:41+00:00 INFO Email "customer_reset_password" for user #2 sent CONTEXT: {"email_type":"customer_reset_password","status":"sent","recipient":"junior.js87","user":2}

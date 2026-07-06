@@ -1,0 +1,43 @@
+{
+	"name": "@fibosearch/front",
+	"version": "1.0.0",
+	"scripts": {
+		"build": "pnpm build-front-pro",
+		"build-front-free": "wp-scripts build --webpack-no-externals --config webpack.config.front.js",
+		"build-front-pro": "npm_config_is_pro=true wp-scripts build --webpack-no-externals --config webpack.config.front.js",
+		"start-front-free": "wp-scripts start --webpack-no-externals --config webpack.config.front.js",
+		"start-front-pro": "npm_config_is_pro=true wp-scripts start --webpack-no-externals --config webpack.config.front.js",
+		"packages-update": "wp-scripts packages-update",
+		"test:unit": "wp-scripts test-unit-js",
+		"test:unit:help": "wp-scripts test-unit-js --help",
+		"test:unit:watch": "wp-scripts test-unit-js --watch --rootDir=tests-js",
+		"test:unit:debug": "wp-scripts --inspect-brk test-unit-js --runInBand --no-cache --rootDir=tests-js",
+		"typecheck": "tsc --noEmit",
+		"lint:js": "NODE_ENV=production wp-scripts lint-js ./src",
+		"storybook": "storybook dev -p 6006 --no-open",
+		"build:storybook": "storybook build"
+	},
+	"author": "FiboSearch Team",
+	"dependencies": {
+		"@preact/signals": "^2.5.1",
+		"@wordpress/dom-ready": "^4.34.0",
+		"js-conditional-compile-loader": "^1.0.16",
+		"preact": "^10.27.2",
+		"umbrellajs": "^3.3.3"
+	},
+	"description": "",
+	"devDependencies": {
+		"@preact/preset-vite": "^2.10.2",
+		"@storybook/preact-vite": "^10.0.5",
+		"@testing-library/dom": "^10.4.1",
+		"@testing-library/jest-dom": "^6.9.1",
+		"@testing-library/preact": "^3.2.4",
+		"@testing-library/react": "^16.3.0",
+		"@types/jest": "^30.0.0",
+		"@types/react": "^19.2.2",
+		"@types/react-dom": "^19.2.2",
+		"@wordpress/scripts": "^26.19.0",
+		"vite": "^7.2.2",
+		"webpack-livereload-plugin": "^3.0.2"
+	}
+}

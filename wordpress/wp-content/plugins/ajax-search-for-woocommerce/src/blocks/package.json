@@ -1,0 +1,22 @@
+{
+	"name": "@fibosearch/blocks",
+	"version": "1.0.0",
+	"description": "",
+	"scripts": {
+		"build": "pnpm build-block-search && pnpm build-block-search-nav",
+		"build-block-search": "wp-scripts build --webpack-src-dir=search --output-path=../../build/blocks/search",
+		"start-block-search": "wp-scripts start --webpack-src-dir=search --output-path=../../build/blocks/search",
+		"build-block-search-nav": "wp-scripts build --webpack-src-dir=search-nav --output-path=../../build/blocks/search-nav",
+		"start-block-search-nav": "wp-scripts build --webpack-src-dir=search-nav --output-path=../../build/blocks/search-nav",
+		"lint:js": "NODE_ENV=production wp-scripts lint-js ."
+	},
+	"keywords": [],
+	"author": "FiboSearch Team",
+	"devDependencies": {
+		"@wordpress/scripts": "^26.19.0"
+	},
+	"dependencies": {
+		"@wordpress/icons": "^9.19.0",
+		"classnames": "^2.5.1"
+	}
+}

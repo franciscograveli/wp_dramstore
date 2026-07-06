@@ -1,0 +1,29 @@
+@font-face {
+  font-family: 'fibosearchicon';
+  src:
+    url('fonts/fibosearchicon.ttf?m2due1') format('truetype'),
+    url('fonts/fibosearchicon.woff?m2due1') format('woff'),
+    url('fonts/fibosearchicon.svg?m2due1#fibosearchicon') format('svg');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+[class^="fibosearchicon-"], [class*=" fibosearchicon-"] {
+  /* use !important to prevent issues with browser extensions that change fonts */
+  font-family: 'fibosearchicon' !important;
+  speak: never;
+  font-style: normal;
+  font-weight: normal;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+
+  /* Better Font Rendering =========== */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.fibosearchicon-fibosearch:before {
+  content: "\e900";
+}

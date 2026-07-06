@@ -1,0 +1,439 @@
+# Copyright (C) 2026 YITH
+# This file is distributed under the same license as the YITH WooCommerce Product Slider Carousel package.
+msgid ""
+msgstr ""
+"Project-Id-Version: YITH WooCommerce Product Slider Carousel 1.53.0\n"
+"Report-Msgid-Bugs-To: YITH <plugins@yithemes.com>\n"
+"POT-Creation-Date: 2026-04-01 08:49:52+00:00\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: YITH <info@yithemes.com>\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Poedit-Country: United States\n"
+"X-Poedit-SourceCharset: UTF-8\n"
+"X-Poedit-KeywordsList: "
+"__;_e;_x:1,2c;_ex:1,2c;_n:1,2;_nx:1,2,4c;_n_noop:1,2;_nx_noop:1,2,3c;esc_"
+"attr__;esc_html__;esc_attr_e;esc_html_e;esc_attr_x:1,2c;esc_html_x:1,2c;\n"
+"X-Poedit-Basepath: ../\n"
+"X-Poedit-SearchPath-0: .\n"
+"X-Poedit-Bookmarks: \n"
+"X-Textdomain-Support: yes\n"
+"X-Generator: grunt-wp-i18n 1.0.3\n"
+
+#: includes/class.yith-product-slider-type.php:135
+#: includes/class.yith-woocommerce-product-slider.php:364
+#: includes/functions.yith-product-slider.php:74
+msgid "Product Slider Carousel"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:136
+msgid "Parent Item:"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:137
+msgid "All Product Slider Carousels"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:138
+msgid "View Product Slider Carousel"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:139
+#: includes/class.yith-product-slider-type.php:140
+msgid "Add New Product Slider Carousel"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:141
+msgid "Edit Product Slider Carousel"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:142
+msgid "Update Product Slider Carousel"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:143
+msgid "Search Product Slider Carousel"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:144
+msgid "Not found"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:145
+msgid "Not found in Trash"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:175
+msgid "Settings"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:179
+msgid "Premium Version"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:181
+msgid "Layout 1"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:182
+msgid "Layout 2"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:183
+msgid "Layout 3"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:305
+msgid "Add YITH WooCommerce Product Slider Carousel shortcode"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:363
+msgid "Add Product Slider"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:369
+msgid "Choose a Product Slider"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:372
+msgid "Choose to show empty terms or not"
+msgstr ""
+
+#: includes/class.yith-woocommerce-product-slider.php:378
+msgid "Z-Index"
+msgstr ""
+
+#: includes/functions.yith-product-slider.php:71
+msgid "Show your Product Slider in sidebar!"
+msgstr ""
+
+#: includes/functions.yith-product-slider.php:78
+msgid "Slider"
+msgstr ""
+
+#: init.php:41
+msgid ""
+"YITH WooCommerce Product Slider Carousel is enabled but not effective. It "
+"requires WooCommerce in order to work."
+msgstr ""
+
+#: init.php:53
+msgid ""
+"You can't activate the free version of YITH WooCommerce Product Slider "
+"Carousel while you are using the premium one."
+msgstr ""
+
+#: plugin-options/settings-options.php:30
+msgid "General Settings"
+msgstr ""
+
+#: plugin-options/settings-options.php:36
+msgid "Product to show"
+msgstr ""
+
+#: plugin-options/settings-options.php:40
+msgid ""
+"This option lets you choose the number of products you want to show. -1 for "
+"all"
+msgstr ""
+
+#: plugin-options/settings-options.php:47
+msgid "Enable Rtl support"
+msgstr ""
+
+#: plugin-options/settings-options.php:55
+msgid "Loop slider"
+msgstr ""
+
+#: plugin-options/settings-options.php:56
+msgid "Choose if you want your slider to scroll products continuously"
+msgstr ""
+
+#: plugin-options/settings-options.php:65
+msgid "Pagination Speed"
+msgstr ""
+
+#: plugin-options/settings-options.php:66
+msgid "Pagination speed in milliseconds"
+msgstr ""
+
+#: plugin-options/settings-options.php:76
+msgid "AutoPlay"
+msgstr ""
+
+#: plugin-options/settings-options.php:77
+msgid "Insert the autoplay value in milliseconds, enter 0 to disable it"
+msgstr ""
+
+#: plugin-options/settings-options.php:86
+msgid "Stop on Hover"
+msgstr ""
+
+#: plugin-options/settings-options.php:87
+msgid "Stop autoplay on mouse hover"
+msgstr ""
+
+#: plugin-options/settings-options.php:96
+msgid "Show Navigation"
+msgstr ""
+
+#: plugin-options/settings-options.php:97
+msgid "Display \"prev\" and \"next\" button"
+msgstr ""
+
+#: plugin-options/settings-options.php:106
+msgid "Show Dots Navigation"
+msgstr ""
+
+#: plugin-options/settings-options.php:107
+msgid "Show or Hide dots navigation"
+msgstr ""
+
+#: plugin-options/settings-options.php:116
+msgid "Animation IN"
+msgstr ""
+
+#: plugin-options/settings-options.php:117
+msgid ""
+"Choose entrance animation for a new slide.*Animation functions work only if "
+"there is just one item in the slider and only in browsers that support "
+"perspective property"
+msgstr ""
+
+#: plugin-options/settings-options.php:124
+msgid "Animation OUT"
+msgstr ""
+
+#: plugin-options/settings-options.php:125
+msgid ""
+"Choose exit animation for a slide. *Animation functions work only if there "
+"is just one item in the slider and only in browsers that support "
+"perspective property"
+msgstr ""
+
+#: plugin-options/settings-options.php:133
+msgid "Animation Speed"
+msgstr ""
+
+#: plugin-options/settings-options.php:134
+msgid "Enter animation duration in milliseconds"
+msgstr ""
+
+#: plugin-options/settings-options.php:148
+msgid "Content Setting"
+msgstr ""
+
+#: plugin-options/settings-options.php:153
+msgid "Title"
+msgstr ""
+
+#: plugin-options/settings-options.php:157
+msgid "Enter Product Slider Title"
+msgstr ""
+
+#: plugin-options/settings-options.php:164
+msgid "Show Title"
+msgstr ""
+
+#: plugin-options/settings-options.php:173
+msgid "Choose Product Category"
+msgstr ""
+
+#: plugin-options/settings-options.php:174
+msgid "Choose product categories"
+msgstr ""
+
+#: plugin-options/settings-options.php:175
+msgid "Leave this field empty if you want all categories to be shown in the slider"
+msgstr ""
+
+#: plugin-options/settings-options.php:189
+msgid "Slider Template"
+msgstr ""
+
+#: plugin-options/settings-options.php:190
+msgid "Choose template for Product Slider"
+msgstr ""
+
+#: plugin-options/settings-options.php:201
+msgid "Images per row"
+msgstr ""
+
+#: plugin-options/settings-options.php:213
+msgid "Order By"
+msgstr ""
+
+#: plugin-options/settings-options.php:218
+msgid "Name"
+msgstr ""
+
+#: plugin-options/settings-options.php:219
+msgid "Price"
+msgstr ""
+
+#: plugin-options/settings-options.php:220
+msgid "Date"
+msgstr ""
+
+#: plugin-options/settings-options.php:226
+msgid "Order Type"
+msgstr ""
+
+#: plugin-options/settings-options.php:238
+msgid "Use this shortcode in your pages "
+msgstr ""
+
+#: templates/admin/lightbox.php:44
+msgid "Add shortcode"
+msgstr ""
+
+#: templates/admin/lightbox.php:120 templates/admin/lightbox.php:122
+msgid "Select a Slider"
+msgstr ""
+
+#: templates/admin/lightbox.php:134
+msgid "Insert"
+msgstr ""
+
+#: templates/admin/premium.php:227 templates/admin/premium.php:380
+#. translators: %1$s is the tag <span>, %2$s is the tag </span>
+msgid ""
+"Upgrade to %1$spremium version%2$s of %1$sYITH WooCommerce Product Slider "
+"Carousel%2$s to benefit from all features!"
+msgstr ""
+
+#: templates/admin/premium.php:231 templates/admin/premium.php:384
+msgid "UPGRADE"
+msgstr ""
+
+#: templates/admin/premium.php:232 templates/admin/premium.php:385
+msgid "to the premium version"
+msgstr ""
+
+#: templates/admin/premium.php:238
+msgid "Premium Features"
+msgstr ""
+
+#: templates/admin/premium.php:246
+msgid "Tailor-made responsivity "
+msgstr ""
+
+#: templates/admin/premium.php:252
+#. translators: %1$s is the tag <b>, %2$s is the tag </b>
+msgid ""
+"Total control on your slider at any resolution! With the premium version of "
+"the plugin, you can set the number of elements to show simoultaneously in "
+"the slider according to the specific resolution. Three sizes considered: "
+"%1$sStandard Desktop%2$s (from  767 px to 991 px), %1$stablet%2$s (from 478 "
+"px to 766 px) and %1$smobile%2$s (from 0 to 478 px)."
+msgstr ""
+
+#: templates/admin/premium.php:266
+msgid "Unlimited sliders"
+msgstr ""
+
+#: templates/admin/premium.php:269
+msgid ""
+"No restrictions to the number of sliders available. You will be able to "
+"create as many as you want to make products in your shop slide in your site "
+"pages"
+msgstr ""
+
+#: templates/admin/premium.php:284
+msgid "Product types"
+msgstr ""
+
+#: templates/admin/premium.php:288
+msgid ""
+"Enjoy the possibility to show different product for each slider!\n"
+"                If you did not want to show all products of your shop, you "
+"can select only some of them, according to the following selection criteria:"
+msgstr ""
+
+#: templates/admin/premium.php:296
+msgid "“on sale” products"
+msgstr ""
+
+#: templates/admin/premium.php:297
+msgid "most purchased products"
+msgstr ""
+
+#: templates/admin/premium.php:298
+msgid "free products"
+msgstr ""
+
+#: templates/admin/premium.php:299
+msgid "featured products"
+msgstr ""
+
+#: templates/admin/premium.php:300
+msgid "most recent products"
+msgstr ""
+
+#: templates/admin/premium.php:301
+msgid "products with a specific ID (any product you want to show)"
+msgstr ""
+
+#: templates/admin/premium.php:311
+msgid "Template layout"
+msgstr ""
+
+#: templates/admin/premium.php:317
+#. translators: %1$s is the tag <b>, %2$s is the tag </b>
+msgid ""
+"Graphic appearance is an essential requirement for a quality product and a "
+"business card to your users. With the premium version of the plugin, you "
+"will\n"
+"                be able to create %1$sthree different layout%2$s templates "
+"and use them for sliders in your shop."
+msgstr ""
+
+#: templates/admin/premium.php:341
+msgid "Hide price and “Add to cart” button"
+msgstr ""
+
+#: templates/admin/premium.php:345
+msgid ""
+"Choose to show or hide price and/or “Add to cart” button for products shown "
+"in your slider.\n"
+"                 Two tailor-made options that you can directly control from "
+"plugin option panel."
+msgstr ""
+
+#: templates/admin/premium.php:360
+msgid "Widget"
+msgstr ""
+
+#: templates/admin/premium.php:365
+#. translators: %1$s is the tag <b>, %2$s is the tag </b>
+msgid ""
+"Add your sliders in sidebars using the widget “YITH WooCommerce Product "
+"Slider Carousel”. Don’t leave anything to chance."
+msgstr ""
+
+#. Description of the plugin/theme
+msgid ""
+"<code><strong>YITH WooCommerce Product Slider Carousel</strong></code> "
+"allows you to create responsive product sliders that you can add to your "
+"pages through a shortcode. <a href =\"https://yithemes.com\">Get more "
+"plugins for your e-commerce shop on <strong>YITH</strong></a>"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:133
+msgctxt "Post Type General Name"
+msgid "YITH WooCommerce Product Slider Carousel"
+msgstr ""
+
+#: includes/class.yith-product-slider-type.php:134
+msgctxt "Post Type Singular Name"
+msgid "Product Slider Carousel"
+msgstr ""
+
+#: includes/functions.yith-product-slider.php:70
+msgctxt "[gutenberg]: product slider carousel"
+msgid "Product Slider Carousel"
+msgstr ""

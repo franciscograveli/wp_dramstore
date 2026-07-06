@@ -1,0 +1,9 @@
+{
+	"extends": "../tsconfig.json",
+	"compilerOptions": {
+		"moduleResolution": "bundler",
+		"types": [ "vite/client", "@types/node" ],
+		"skipLibCheck": true
+	},
+	"include": [ "../src", "./**/*" ]
+}

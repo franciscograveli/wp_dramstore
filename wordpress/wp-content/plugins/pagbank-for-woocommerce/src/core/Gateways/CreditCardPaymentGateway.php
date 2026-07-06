@@ -1,0 +1,1416 @@
+<?php
+/**
+ * Credit card payment gateway.
+ *
+ * @package PagBank_WooCommerce\Gateways
+ */
+
+namespace PagBank_WooCommerce\Gateways;
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+use Exception;
+use PagBank_WooCommerce\Gateways\Traits\ReactSettingsTrait;
+use PagBank_WooCommerce\Presentation\Api;
+use PagBank_WooCommerce\Presentation\ApiHelpers;
+use PagBank_WooCommerce\Presentation\Connect;
+use PagBank_WooCommerce\Presentation\Helpers;
+use PagBank_WooCommerce\Presentation\PaymentToken;
+use WC_Order;
+use WC_Order_Item_Fee;
+use WC_Payment_Gateway_CC;
+use WC_Payment_Tokens;
+use WC_Subscriptions_Cart;
+use WC_Subscriptions_Manager;
+use WooCommerce;
+use WP_Error;
+
+/**
+ * Class CreditCardPaymentGateway.
+ */
+class CreditCardPaymentGateway extends WC_Payment_Gateway_CC {
+
+	use ReactSettingsTrait;
+
+	/**
+	 * Api instance.
+	 */
+	public Api $api;
+
+	/**
+	 * Connect instance.
+	 */
+	public Connect $connect;
+
+	/**
+	 * Environment.
+	 */
+	public string $environment;
+
+	/**
+	 * Logs enabled.
+	 */
+	public bool $logs_enabled;
+
+	/**
+	 * Installments enabled.
+	 */
+	public bool $installments_enabled;
+
+	/**
+	 * Maximum installments.
+	 */
+	public int $maximum_installments;
+
+	/**
+	 * Transfer of interest enabled.
+	 */
+	public bool $transfer_of_interest_enabled;
+
+	/**
+	 * Maximum installments interest free.
+	 */
+	protected int $maximum_installments_interest_free;
+
+	/**
+	 * 3DS authentication enabled.
+	 */
+	public bool $threeds_enabled;
+
+	/**
+	 * Card type.
+	 *
+	 * @var string (CREDIT_CARD, DEBIT_CARD)
+	 */
+	public string $card_type;
+
+	/**
+	 * Card field prefix.
+	 *
+	 * To share gateway fields between credit and debit cards, we need to use a prefix to identify the fields.
+	 */
+	public string $card_field_prefix;
+
+	/**
+	 * CreditCardPaymentGateway constructor.
+	 */
+	public function __construct() {
+		$this->id                = 'pagbank_credit_card';
+		$this->icon              = plugins_url( 'dist/images/icons/card.png', PAGBANK_WOOCOMMERCE_FILE_PATH );
+		$this->card_type         = 'CREDIT_CARD';
+		$this->card_field_prefix = 'pagbank_credit_card';
+		$this->method_title      = __( 'PagBank Cartão de Crédito', 'pagbank-for-woocommerce' );
+		// phpcs:ignore Generic.Files.LineLength -- Translation string cannot be split.
+		$this->method_description = __( 'Aceite pagamentos via cartão de crédito em checkout transparente, com parcelamento em até 18x (mediante aprovação), autenticação 3D Secure, tokenização para compras futuras e reembolso online total ou parcial.', 'pagbank-for-woocommerce' );
+		$this->has_fields         = true;
+		$this->supports           = array(
+			'products',
+			'tokenization',
+			'refunds',
+			'subscriptions',
+			'subscription_cancellation',
+			'subscription_suspension',
+			'subscription_reactivation',
+			'subscription_amount_changes',
+			'subscription_date_changes',
+			'subscription_payment_method_change',
+			'subscription_payment_method_change_customer',
+			'subscription_payment_method_change_admin',
+			'multiple_subscriptions',
+		);
+
+		$this->init_form_fields();
+		$this->init_settings();
+
+		$this->title        = $this->get_option( 'title' );
+		$this->environment  = $this->get_option( 'environment' );
+		$this->logs_enabled = 'yes' === $this->get_option( 'logs_enabled' );
+		$this->connect      = new Connect( $this->environment );
+		$this->api          = new Api( $this->environment, $this->logs_enabled ? $this->id : null );
+
+		$this->installments_enabled               = 'yes' === $this->get_option( 'installments_enabled' );
+		$this->maximum_installments               = (int) $this->get_option( 'maximum_installments' );
+		$this->transfer_of_interest_enabled       = 'yes' === $this->get_option( 'transfer_of_interest_enabled' );
+		$maximum_installments_interest_free       = (int) $this->get_option( 'maximum_installments_interest_free' );
+		$this->maximum_installments_interest_free = 1 === $maximum_installments_interest_free ? 0 : $maximum_installments_interest_free;
+
+		$this->threeds_enabled = 'yes' === $this->get_option( 'threeds_enabled' );
+
+		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
+
+		if ( $this->card_type === 'CREDIT_CARD' ) {
+			add_action( 'woocommerce_api_' . $this->id . '_installments', array( $this, 'get_installments' ) );
+		}
+
+		add_action( 'woocommerce_api_' . $this->id . '_3ds_session', array( $this, 'get_3ds_session' ) );
+		add_action( 'woocommerce_scheduled_subscription_payment_' . $this->id, array( $this, 'scheduled_subscription_payment' ), 10, 2 );
+		add_filter( 'woocommerce_get_customer_payment_tokens', array( $this, 'filter_customer_tokens' ), 10, 3 );
+
+		$this->is_available_validation();
+	}
+
+	/**
+	 * Get installment options for select fields.
+	 *
+	 * By default returns options from 1x to 12x.
+	 * If PAGBANK_FEATURE_FLAG_18X_INSTALLMENTS_ENABLED constant is defined,
+	 * extends the options to include 13x through 18x.
+	 *
+	 * @return array Associative array of installment options.
+	 */
+	private function get_installment_options( bool $is_interest_free = false ): array {
+		$options = array();
+		$max     = true === Helpers::get_constant_value( 'PAGBANK_FEATURE_FLAG_18X_INSTALLMENTS_ENABLED' ) ? 18 : 12;
+
+		if ( $is_interest_free ) {
+			$options['0'] = '1x';
+			$options['1'] = '1x'; // Kept for backwards compatibility (converted to 0 at runtime).
+			$start        = 2;
+		} else {
+			$start = 1;
+		}
+
+		for ( $i = $start; $i <= $max; $i++ ) {
+			$options[ (string) $i ] = "{$i}x";
+		}
+
+		return $options;
+	}
+
+	/**
+	 * Initialize form fields.
+	 */
+	public function init_form_fields(): void {
+		$this->form_fields = array(
+			'enabled'                            => array(
+				'title'   => __( 'Habilitar/Desabilitar', 'pagbank-for-woocommerce' ),
+				'type'    => 'checkbox',
+				'label'   => __( 'Habilitar cartão de crédito', 'pagbank-for-woocommerce' ),
+				'default' => 'no',
+			),
+			'environment'                        => array(
+				'title'       => __( 'Ambiente', 'pagbank-for-woocommerce' ),
+				'type'        => 'select',
+				'description' => __( 'Isso irá definir o ambiente de testes ou produção.', 'pagbank-for-woocommerce' ),
+				'default'     => 'sandbox',
+				'options'     => array(
+					'sandbox'    => __( 'Ambiente de testes', 'pagbank-for-woocommerce' ),
+					'production' => __( 'Produção', 'pagbank-for-woocommerce' ),
+				),
+				'desc_tip'    => true,
+			),
+			'pagbank_connect'                    => array(
+				'title'       => __( 'Conta PagBank', 'pagbank-for-woocommerce' ),
+				'type'        => 'text',
+				'description' => __( 'Conecte a sua conta PagBank para aceitar pagamentos.', 'pagbank-for-woocommerce' ),
+			),
+			'title'                              => array(
+				'title'       => __( 'Título', 'pagbank-for-woocommerce' ),
+				'type'        => 'text',
+				'description' => __( 'Isso irá controlar o título que o cliente verá durante o checkout.', 'pagbank-for-woocommerce' ),
+				'default'     => __( 'Cartão de crédito', 'pagbank-for-woocommerce' ),
+				'desc_tip'    => true,
+			),
+			'description'                        => array(
+				'title'       => __( 'Descrição', 'pagbank-for-woocommerce' ),
+				'type'        => 'textarea',
+				'description' => __( 'Isso irá controlar a descrição que o cliente verá durante o checkout.', 'pagbank-for-woocommerce' ),
+				'default'     => 'Preencha os dados do seu cartão de crédito no formulário abaixo:',
+				'desc_tip'    => true,
+			),
+			'installments_enabled'               => array(
+				'title'             => __( 'Parcelamento', 'pagbank-for-woocommerce' ),
+				'type'              => 'checkbox',
+				'label'             => __( 'Ativar parcelamento', 'pagbank-for-woocommerce' ),
+				'description'       => __( 'Isso irá habilitar o parcelamento durante o checkout.', 'pagbank-for-woocommerce' ),
+				'default'           => 'no',
+				'desc_tip'          => true,
+				'custom_attributes' => array(
+					'data-toggle' => implode(
+						',',
+						array(
+							'#' . $this->get_field_key( 'maximum_installments' ),
+							'#' . $this->get_field_key( 'transfer_of_interest_enabled' ),
+						)
+					),
+				),
+			),
+			'maximum_installments'               => array(
+				'title'       => __( 'Máximo de parcelas', 'pagbank-for-woocommerce' ),
+				'type'        => 'select',
+				'description' => __( 'Isso irá definir o número máximo de parcelas durante o checkout.', 'pagbank-for-woocommerce' ),
+				'default'     => '12',
+				'options'     => $this->get_installment_options(),
+				'desc_tip'    => true,
+			),
+			'transfer_of_interest_enabled'       => array(
+				'title'             => __( 'Repasse de juros', 'pagbank-for-woocommerce' ),
+				'type'              => 'checkbox',
+				'label'             => __( 'Ativar repasse de juros', 'pagbank-for-woocommerce' ),
+				// phpcs:ignore Generic.Files.LineLength -- Translation string cannot be split.
+				'description'       => __( 'Isso irá ativar o repasse de juros durante o checkout. Por padrão as parcelas serão sem juros. Isso irá liberar a opção de definir a quantidade de parcelas sem juros.', 'pagbank-for-woocommerce' ),
+				'default'           => 'no',
+				'desc_tip'          => true,
+				'custom_attributes' => array(
+					'data-toggle' => implode(
+						',',
+						array(
+							'#' . $this->get_field_key( 'maximum_installments_interest_free' ),
+						)
+					),
+				),
+			),
+			'maximum_installments_interest_free' => array(
+				'title'       => __( 'Máximo de parcelas sem juros', 'pagbank-for-woocommerce' ),
+				'type'        => 'select',
+				'description' => __( 'Isso irá definir a quantidade de parcelas que serão sem juros.', 'pagbank-for-woocommerce' ),
+				'default'     => '0',
+				'options'     => $this->get_installment_options( true ),
+				'desc_tip'    => true,
+			),
+			'threeds_enabled'                    => array(
+				'title'       => __( 'Autenticação 3DS', 'pagbank-for-woocommerce' ),
+				'type'        => 'checkbox',
+				'label'       => __( 'Habilitar autenticação 3DS', 'pagbank-for-woocommerce' ),
+				'description' => __( 'Adiciona uma camada extra de segurança e transfere a responsabilidade de fraude para o banco emissor em transações autenticadas.', 'pagbank-for-woocommerce' ),
+				'default'     => 'no',
+				'desc_tip'    => true,
+			),
+			'logs_enabled'                       => array(
+				'title'       => __( 'Logs para depuração', 'pagbank-for-woocommerce' ),
+				'type'        => 'checkbox',
+				'label'       => __( 'Ativar logs', 'pagbank-for-woocommerce' ),
+				'description' => __( 'Isso irá ativar os logs para depuração para auxiliar em caso de suporte.', 'pagbank-for-woocommerce' ),
+				'default'     => 'yes',
+				'desc_tip'    => true,
+			),
+		);
+	}
+
+	/**
+	 * Get payment method title.
+	 *
+	 * @return string The title.
+	 */
+	public function get_title(): string {
+		if ( is_admin() ) {
+			$screen = get_current_screen();
+
+			if ( $screen->id === 'woocommerce_page_wc-orders' ) {
+				return $this->method_title;
+			}
+		}
+
+		return apply_filters( 'woocommerce_gateway_title', $this->title, $this->id );
+	}
+
+	/**
+	 * Enqueue scripts in tokenization form.
+	 */
+	public function tokenization_script(): void {
+		wp_enqueue_script( 'pagbank-sdk', 'https://assets.pagseguro.com.br/checkout-sdk-js/rc/dist/browser/pagseguro.min.js', array(), PAGBANK_WOOCOMMERCE_VERSION, true );
+
+		wp_enqueue_script(
+			'pagbank-checkout-credit-card',
+			plugins_url( 'dist/public/legacy/checkout-credit-card.js', PAGBANK_WOOCOMMERCE_FILE_PATH ),
+			array(),
+			PAGBANK_WOOCOMMERCE_VERSION,
+			true
+		);
+
+		wp_scripts()->add_data( 'pagbank-checkout-credit-card', 'pagbank_script', true );
+
+		$connect_data = $this->connect->get_data();
+
+		$gateway_config = array(
+			'gateway_id'        => $this->id,
+			'card_field_prefix' => $this->card_field_prefix,
+			'card_type'         => $this->card_type,
+			'messages'          => array(
+				'inputs_not_found'              => __( 'Campos não encontrados.', 'pagbank-for-woocommerce' ),
+				'invalid_public_key'            => __( 'Chave pública inválida.', 'pagbank-for-woocommerce' ),
+				'invalid_holder_name'           => __( 'Nome do titular do cartão inválido.', 'pagbank-for-woocommerce' ),
+				'invalid_card_number'           => __( 'Número do cartão inválido.', 'pagbank-for-woocommerce' ),
+				'invalid_card_expiry_date'      => __( 'Data de expiração do cartão inválida.', 'pagbank-for-woocommerce' ),
+				'invalid_security_code'         => __( 'Código de segurança do cartão inválido.', 'pagbank-for-woocommerce' ),
+				'invalid_encrypted_card'        => __( 'O cartão criptografado não foi encontrado.', 'pagbank-for-woocommerce' ),
+				'invalid_card_bin'              => __( 'O bin do cartão não foi encontrado.', 'pagbank-for-woocommerce' ),
+				// 3DS messages.
+				'threeds_session_error'         => __( 'Não foi possível iniciar a validação do cartão. Tente novamente.', 'pagbank-for-woocommerce' ),
+				'threeds_auth_error'            => __( 'Não foi possível validar seu cartão. Tente novamente ou utilize outro cartão.', 'pagbank-for-woocommerce' ),
+				'threeds_change_payment_method' => __( 'Este cartão não pode ser utilizado. Use outro método de pagamento.', 'pagbank-for-woocommerce' ),
+				'invalid_cellphone'             => __( 'O celular informado não é válido.', 'pagbank-for-woocommerce' ),
+				'threeds_not_supported'         => __( 'O cartão não pode ser autenticado. Use outro método de pagamento.', 'pagbank-for-woocommerce' ),
+			),
+			'settings'          => array(
+				'installments_enabled'               => $this->installments_enabled,
+				'maximum_installments'               => $this->maximum_installments,
+				'transfer_of_interest_enabled'       => $this->transfer_of_interest_enabled,
+				'maximum_installments_interest_free' => $this->maximum_installments_interest_free,
+				'card_public_key'                    => isset( $connect_data['public_key'] ) ? $connect_data['public_key'] : null,
+				// 3DS settings.
+				'threeds_enabled'                    => $this->threeds_enabled,
+				'api_3ds_session_url'                => $this->get_api_3ds_session_url(),
+				'threeds_nonce'                      => wp_create_nonce( 'pagbank_get_3ds_session' ),
+				'environment'                        => $this->environment,
+			),
+		);
+
+		// Each gateway pushes itself into a shared registry so the single legacy
+		// script can drive both the credit and debit gateways when both render
+		// on the same page.
+		wp_add_inline_script(
+			'pagbank-checkout-credit-card',
+			'window.PagBankLegacyCheckoutGateways = window.PagBankLegacyCheckoutGateways || {};'
+			. ' window.PagBankLegacyCheckoutGateways[' . wp_json_encode( $this->id ) . '] = '
+			. wp_json_encode( $gateway_config ) . ';',
+			'before'
+		);
+
+		parent::tokenization_script();
+	}
+
+	/**
+	 * Get installments.
+	 *
+	 * @throws Exception When card type does not support installments.
+	 */
+	public function get_installments(): void {
+		if ( $this->card_type !== 'CREDIT_CARD' ) {
+			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message.
+			throw new Exception( __( 'O método de pagamento não suporta parcelamento.', 'pagbank-for-woocommerce' ) );
+		}
+
+		$nonce                              = isset( $_GET['nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['nonce'] ) ) : null;
+		$maximum_installments               = (int) $this->maximum_installments;
+		$maximum_installments_interest_free = min( (int) $this->maximum_installments_interest_free, $maximum_installments );
+		$card_bin                           = isset( $_GET['card_bin'] ) ? sanitize_text_field( wp_unslash( $_GET['card_bin'] ) ) : null;
+		$payment_token                      = isset( $_GET['payment_token'] ) ? sanitize_text_field( wp_unslash( $_GET['payment_token'] ) ) : null;
+		$amount                             = isset( $_GET['amount'] ) ? (float) sanitize_text_field( wp_unslash( $_GET['amount'] ) ) : null;
+		$amount_in_cents                    = Helpers::format_money_cents( $amount );
+
+		if ( ! wp_verify_nonce( $nonce, 'pagbank_get_installments' ) ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'Nonce inválido.', 'pagbank-for-woocommerce' ),
+				),
+				400
+			);
+			return;
+		}
+
+		if ( false === $this->installments_enabled ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'O parcelamento não está ativado.', 'pagbank-for-woocommerce' ),
+				),
+				400
+			);
+			return;
+		}
+
+		if ( false === $this->transfer_of_interest_enabled ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'O repasse de juros não está ativado.', 'pagbank-for-woocommerce' ),
+				),
+				400
+			);
+			return;
+		}
+
+		if ( empty( $card_bin ) && empty( $payment_token ) ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'O "card_bin" ou "payment_token" é obrigatório.', 'pagbank-for-woocommerce' ),
+				),
+				400
+			);
+			return;
+		} elseif ( $card_bin && $payment_token ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'Você não pode enviar o "card_bin" e o "payment_token" ao mesmo tempo.', 'pagbank-for-woocommerce' ),
+				),
+				400
+			);
+			return;
+		}
+
+		if ( $payment_token && ! $card_bin ) {
+
+			/**
+			 * Convert to PaymentToken.
+			 *
+			 * @var PaymentToken
+			 */
+			$token = WC_Payment_Tokens::get( $payment_token );
+
+			if ( null === $token || get_current_user_id() !== $token->get_user_id() ) {
+				wp_send_json_error(
+					array(
+						'message' => __( 'Token de pagamento inválido.', 'pagbank-for-woocommerce' ),
+					),
+					400
+				);
+
+				return;
+			}
+
+			if ( $token->get_type() !== 'PagBank_CC' ) {
+				wp_send_json_error(
+					array(
+						'message' => __( 'Ops, houve um erro com o token de pagamento.', 'pagbank-for-woocommerce' ),
+					),
+					400
+				);
+
+				return;
+			}
+
+			$card_bin = $token->get_bin();
+		}
+
+		$charge_fees = $this->api->charge_fees( $amount_in_cents, $maximum_installments, $maximum_installments_interest_free, $card_bin );
+
+		if ( is_wp_error( $charge_fees ) ) {
+			wp_send_json_error(
+				array(
+					'message' => $charge_fees->get_error_message(),
+				),
+				500
+			);
+			return;
+		}
+
+		$key                = array_key_first( $charge_fees['payment_methods']['credit_card'] );
+		$installments_plans = $charge_fees['payment_methods']['credit_card'][ $key ]['installment_plans'];
+
+		$mapped_installments = array_map(
+			function ( $plan ) {
+				return array(
+					'installments'      => $plan['installments'],
+					'installment_value' => $plan['installment_value'],
+					'interest_free'     => $plan['interest_free'],
+					// phpcs:disable Generic.Files.LineLength -- Translation strings with sprintf cannot be split.
+					'title'             => $plan['interest_free']
+												// translators: 1: installments, 2: installment value.
+												? sprintf( __( '%1$dx de %2$s sem juros', 'pagbank-for-woocommerce' ), $plan['installments'], Helpers::format_money( $plan['installment_value'] / 100 ) )
+												// translators: 1: installments, 2: installment value, 3: installment total.
+												: sprintf( __( '%1$dx de %2$s com juros (%3$s)', 'pagbank-for-woocommerce' ), $plan['installments'], Helpers::format_money( $plan['installment_value'] / 100 ), Helpers::format_money( $plan['amount']['value'] / 100 ) ),
+					// phpcs:enable Generic.Files.LineLength
+					'amount'            => $plan['amount']['value'],
+				);
+			},
+			$installments_plans
+		);
+
+		wp_send_json_success(
+			$mapped_installments
+		);
+	}
+
+	/**
+	 * Handle add payment method form.
+	 *
+	 * @return array Result.
+	 */
+	public function add_payment_method(): array {
+		return array(
+			'result'   => 'failure',
+			'redirect' => wc_get_endpoint_url( 'payment-methods' ),
+		);
+	}
+
+	/**
+	 * Filter customer tokens.
+	 *
+	 * @param array  $tokens Customer tokens.
+	 * @param int    $customer_id Customer ID.
+	 * @param string $gateway_id Gateway ID.
+	 *
+	 * @return array The filtered tokens.
+	 */
+	public function filter_customer_tokens( array $tokens, int $customer_id, string $gateway_id ): array {
+		if ( $gateway_id !== $this->id ) {
+			return $tokens;
+		}
+
+		$connect_data = $this->connect->get_data();
+
+		if ( ! $connect_data ) {
+			return array();
+		}
+
+		$tokens = array_filter(
+			$tokens,
+			function ( $token ) use ( $connect_data ) {
+				return $token->get_connect_account_id() === $connect_data['account_id'];
+			}
+		);
+
+		return $tokens;
+	}
+
+	/**
+	 * Checkout payment fields.
+	 */
+	public function payment_fields(): void {
+		if ( ! is_checkout() ) {
+			echo '<p>' . esc_html( __( 'Você só pode adicionar um cartão durante o checkout.', 'pagbank-for-woocommerce' ) ) . '</p>';
+			return;
+		}
+
+		$this->tokenization_script();
+		$this->saved_payment_methods();
+		$this->form();
+		$this->save_payment_method_checkbox();
+		if ( $this->installments_enabled ) {
+			$this->installments_fields();
+			$this->installments_fields_warning();
+		}
+	}
+
+	/**
+	 * Snapshot of cart/order data used as the source for the 3DS payload on
+	 * the legacy checkout. The TS side prefers live `#billing_*` fields when
+	 * available and falls back to this snapshot — primarily for order-pay,
+	 * where those fields are absent.
+	 *
+	 * @return array{
+	 *     amount_cents: int,
+	 *     customer: array{name: string, email: string, phone: string},
+	 *     billingAddress: array{street: string, number: string, regionCode: string, country: string, city: string, postalCode: string}
+	 * }
+	 */
+	private function get_threeds_snapshot(): array {
+		$order_id    = get_query_var( 'order-pay' );
+		$is_checkout = empty( $order_id );
+		$order       = $is_checkout ? null : wc_get_order( $order_id );
+
+		if ( $is_checkout ) {
+			$customer = WC()->customer;
+			$total    = WC()->cart ? WC()->cart->get_totals()['total'] : 0;
+
+			$customer_name = $customer
+				? trim( $customer->get_billing_first_name() . ' ' . $customer->get_billing_last_name() )
+				: '';
+			$email         = $customer ? $customer->get_billing_email() : '';
+			$phone         = $customer ? $customer->get_billing_phone() : '';
+			$street        = $customer ? $customer->get_billing_address_1() : '';
+			$number        = $customer ? (string) $customer->get_meta( 'billing_number' ) : '';
+			$state         = $customer ? $customer->get_billing_state() : '';
+			$city          = $customer ? $customer->get_billing_city() : '';
+			$postal_code   = $customer ? $customer->get_billing_postcode() : '';
+		} else {
+			$total = $order ? $order->get_total() : 0;
+
+			$customer_name = $order
+				? trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() )
+				: '';
+			$email         = $order ? $order->get_billing_email() : '';
+			$phone         = $order ? $order->get_billing_phone() : '';
+			$street        = $order ? $order->get_billing_address_1() : '';
+			$number        = $order ? (string) $order->get_meta( '_billing_number' ) : '';
+			$state         = $order ? $order->get_billing_state() : '';
+			$city          = $order ? $order->get_billing_city() : '';
+			$postal_code   = $order ? $order->get_billing_postcode() : '';
+		}
+
+		return array(
+			'amount_cents'   => Helpers::format_money_cents( $total ),
+			'customer'       => array(
+				// Names sent to PagBank must match the sanitization the order
+				// API applies (drops non-letter/digit/space). Sanitizing in
+				// the snapshot keeps the 3DS payload consistent.
+				'name'  => ApiHelpers::sanitize_pagbank_name( $customer_name ),
+				'email' => $email,
+				'phone' => $phone,
+			),
+			'billingAddress' => array(
+				'street'     => $street,
+				'number'     => $number,
+				'regionCode' => $state,
+				'country'    => 'BRA',
+				'city'       => $city,
+				'postalCode' => preg_replace( '/\D/', '', (string) $postal_code ) ?? '',
+			),
+		);
+	}
+
+	/**
+	 * Outputs fields for entering credit card information.
+	 *
+	 * @since 2.6.0
+	 */
+	public function form(): void {
+		$cart_contains_subscription = $this->cart_contains_subscription();
+		wp_enqueue_script( 'wc-credit-card-form' );
+
+		// Snapshot of cart/order data used by the legacy 3DS flow.
+		// On the regular checkout, the script prefers live `#billing_*` form
+		// fields; this snapshot is the authoritative source for the order-pay
+		// page (where those fields don't exist) and a fallback otherwise.
+		$threeds_snapshot      = wp_json_encode( $this->get_threeds_snapshot() );
+		$threeds_snapshot_attr = false === $threeds_snapshot ? '' : esc_attr( $threeds_snapshot );
+
+		$fields = array();
+
+		// phpcs:disable Generic.Files.LineLength -- HTML form fields cannot be reasonably split.
+		$cvc_field = '<p class="form-row form-row-wide">
+			<label for="' . esc_attr( $this->id ) . '-card-cvc">' . esc_html__( 'Código de segurança', 'pagbank-for-woocommerce' ) . '&nbsp;<span class="required">*</span></label>
+			<input id="' . esc_attr( $this->id ) . '-card-cvc" class="input-text wc-credit-card-form-card-cvc" inputmode="numeric" autocomplete="off" autocorrect="no" autocapitalize="no" spellcheck="no" type="tel" maxlength="4" placeholder="' . esc_attr__( 'CVC', 'pagbank-for-woocommerce' ) . '" name="' . esc_attr( $this->id . '-card-cvc' ) . '" />
+		</p>';
+
+		$default_fields = array(
+			'card-holder-field'      => '<p class="form-row form-row-wide">
+				<label for="' . esc_attr( $this->id ) . '-card-holder">' . esc_html__( 'Titular do cartão', 'pagbank-for-woocommerce' ) . '&nbsp;<span class="required">*</span></label>
+				<input id="' . esc_attr( $this->id ) . '-card-holder" name="' . esc_attr( $this->id ) . '-card-holder" class="input-text wc-credit-card-form-card-holder" autocomplete="cc-name" autocorrect="no" autocapitalize="no" spellcheck="no" type="text" name="' . esc_attr( $this->id . '-card-holder' ) . '" style="font-size: 1.41575em;" />
+			</p>',
+			'card-number-field'      => '<p class="form-row form-row-wide">
+				<label for="' . esc_attr( $this->id ) . '-card-number">' . esc_html__( 'Número do cartão', 'pagbank-for-woocommerce' ) . '&nbsp;<span class="required">*</span></label>
+				<input id="' . esc_attr( $this->id ) . '-card-number" class="input-text wc-credit-card-form-card-number" inputmode="numeric" autocomplete="cc-number" autocorrect="no" autocapitalize="no" spellcheck="no" type="tel" placeholder="&bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull;" />
+			</p>',
+			'card-expiry-field'      => '<p class="form-row form-row-wide">
+				<label for="' . esc_attr( $this->id ) . '-card-expiry">' . esc_html__( 'Data de validade (MM/YY)', 'pagbank-for-woocommerce' ) . '&nbsp;<span class="required">*</span></label>
+				<input id="' . esc_attr( $this->id ) . '-card-expiry" class="input-text wc-credit-card-form-card-expiry" inputmode="numeric" autocomplete="cc-exp" autocorrect="no" autocapitalize="no" spellcheck="no" type="tel" placeholder="' . esc_attr__( 'MM / YY', 'pagbank-for-woocommerce' ) . '" />
+			</p>',
+			'encrypted-card-field'   => '<input id="' . esc_attr( $this->id ) . '-encrypted-card" type="hidden" name="' . esc_attr( $this->id ) . '-encrypted-card" />',
+			'card-bin-field'         => '<input id="' . esc_attr( $this->id ) . '-card-bin" type="hidden" name="' . esc_attr( $this->id ) . '-card-bin" />',
+			'threeds-id-field'       => '<input id="' . esc_attr( $this->id ) . '-threeds-id" type="hidden" name="' . esc_attr( $this->id ) . '-threeds-id" />',
+			'threeds-snapshot-field' => '<input id="' . esc_attr( $this->id ) . '-threeds-snapshot" type="hidden" value="' . $threeds_snapshot_attr . '" />',
+		);
+		// phpcs:enable Generic.Files.LineLength
+
+		if ( ! $cart_contains_subscription ) {
+			$default_fields['cart-cvc-field'] = $cvc_field;
+		}
+
+		$fields = wp_parse_args( $fields, apply_filters( 'woocommerce_credit_card_form_fields', $default_fields, $this->id ) );
+		?>
+
+		<fieldset id="wc-<?php echo esc_attr( $this->id ); ?>-cc-form" class='wc-credit-card-form wc-payment-form'>
+			<?php do_action( 'woocommerce_credit_card_form_start', $this->id ); ?>
+			<?php
+			foreach ( $fields as $field ) {
+				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- XSS ok.
+				echo $field;
+			}
+			?>
+			<?php do_action( 'woocommerce_credit_card_form_end', $this->id ); ?>
+			<div class="clear"></div>
+		</fieldset>
+		<?php
+
+		if ( $cart_contains_subscription ) {
+			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $cvc_field is a HTML.
+			echo '<fieldset style="padding: 0;">' . $cvc_field . '</fieldset>';
+		}
+	}
+
+	/**
+	 * Installments fields on checkout.
+	 */
+	public function installments_fields(): void {
+		$order_id    = get_query_var( 'order-pay' );
+		$is_checkout = empty( $order_id );
+		$order       = $is_checkout ? null : wc_get_order( $order_id );
+		$total       = Helpers::format_money_cents( $is_checkout ? WC()->cart->get_totals()['total'] : $order->get_total() );
+
+		if ( $this->transfer_of_interest_enabled ) {
+			wc_get_template(
+				'checkout/legacy/checkout-installments-fields-transfer-of-interest.php',
+				array(
+					'gateway'     => $this,
+					'is_checkout' => $is_checkout,
+					'order'       => $order,
+					'total'       => $total,
+				),
+				'woocommerce/pagbank/',
+				PAGBANK_WOOCOMMERCE_TEMPLATES_PATH
+			);
+		} else {
+			wc_get_template(
+				'checkout/legacy/checkout-installments-fields-no-interest.php',
+				array(
+					'gateway'     => $this,
+					'is_checkout' => $is_checkout,
+					'order'       => $order,
+					'total'       => $total,
+				),
+				'woocommerce/pagbank/',
+				PAGBANK_WOOCOMMERCE_TEMPLATES_PATH
+			);
+		}
+	}
+
+	/**
+	 * Installments fields warning.
+	 */
+	public function installments_fields_warning(): void {
+		if ( $this->cart_contains_subscription() ) {
+			echo '<small>' . esc_html( 'O parcelamento ocorrerá somente para o pagamento inicial. As cobranças subsquentes não haverá parcelamento.' ) . '</small>';
+		}
+	}
+
+	/**
+	 * Validate fields.
+	 */
+	public function validate_fields(): bool {
+		// Disable outside checkout.
+		if ( ! is_checkout() ) {
+			wc_add_notice( __( 'Você só pode adicionar um cartão durante o checkout.', 'pagbank-for-woocommerce' ), 'error' );
+			return false;
+		}
+
+		$cart_contains_subscriptions = $this->cart_contains_subscription();
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$payment_token = isset( $_POST[ 'wc-' . $this->id . '-payment-token' ] ) ? wc_clean( wp_unslash( $_POST[ 'wc-' . $this->id . '-payment-token' ] ) ) : null;
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$cvc = $cart_contains_subscriptions && isset( $_POST[ $this->card_field_prefix . '-card-cvc' ] ) ? wc_clean( wp_unslash( $_POST[ $this->card_field_prefix . '-card-cvc' ] ) ) : null;
+
+		$is_new_card = null === $payment_token || 'new' === $payment_token;
+
+		// Validate for subscriptions.
+		if ( $cart_contains_subscriptions ) {
+			if ( ! $cvc ) {
+				wc_add_notice( __( 'O código de segurança do cartão é necessário para assinaturas.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+		}
+
+		// Validation for new cards.
+		if ( $is_new_card ) {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$has_holder = isset( $_POST[ $this->card_field_prefix . '-card-holder' ] ) && ! empty( $_POST[ $this->card_field_prefix . '-card-holder' ] );
+			if ( ! $has_holder ) {
+				wc_add_notice( __( 'O titular do cartão é obrigatório.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$has_encrypted_card = isset( $_POST[ $this->card_field_prefix . '-encrypted-card' ] ) && ! empty( $_POST[ $this->card_field_prefix . '-encrypted-card' ] );
+			if ( ! $has_encrypted_card ) {
+				wc_add_notice( __( 'O cartão criptografado não foi identificado. Por favor, contate o suporte.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$has_card_bin = isset( $_POST[ $this->card_field_prefix . '-card-bin' ] ) && ! empty( $_POST[ $this->card_field_prefix . '-card-bin' ] );
+			if ( ! $has_card_bin ) {
+				wc_add_notice( __( 'O bin do cartão não foi identificado. Por favor, contate o suporte.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$card_bin          = wc_clean( wp_unslash( $_POST[ $this->card_field_prefix . '-card-bin' ] ) );
+			$is_valid_card_bin = strlen( $card_bin ) === 6;
+			if ( ! $is_valid_card_bin ) {
+				wc_add_notice( __( 'Bin do cartão inválido. Por favor, contate o suporte.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+		}
+
+		// Validation for saved credit cards.
+		if ( ! $is_new_card ) {
+			$token = WC_Payment_Tokens::get( $payment_token );
+
+			$is_token_from_same_user = $token->get_user_id() === get_current_user_id();
+			if ( ! $is_token_from_same_user ) {
+				wc_add_notice( __( 'O token de pagamento é inválido.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+		}
+
+		// Validation for installments.
+		if ( $this->installments_enabled ) {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$has_installments = isset( $_POST[ $this->card_field_prefix . '-installments' ] ) && ! empty( $_POST[ $this->card_field_prefix . '-installments' ] );
+			if ( ! $has_installments ) {
+				wc_add_notice( __( 'É necessário selecionar a quantidade de parcelas.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$installments = (int) wc_clean( wp_unslash( $_POST[ $this->card_field_prefix . '-installments' ] ) );
+			if ( $installments > $this->maximum_installments || $installments < 1 ) {
+				wc_add_notice( __( 'A quantidade de parcelas é inválida.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+		}
+
+		// Validation for 3DS.
+		if ( $this->threeds_enabled && $is_new_card ) {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce is verified by WooCommerce checkout process.
+			$has_3ds_id = isset( $_POST[ $this->card_field_prefix . '-threeds-id' ] ) && ! empty( $_POST[ $this->card_field_prefix . '-threeds-id' ] );
+
+			if ( ! $has_3ds_id ) {
+				wc_add_notice( __( 'A autenticação 3DS é obrigatória para novos cartões.', 'pagbank-for-woocommerce' ), 'error' );
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check if order contains a subscription.
+	 *
+	 * @param WC_Order $order Order.
+	 */
+	public function order_contains_subscription( WC_Order $order ): bool {
+		return function_exists( 'wcs_order_contains_subscription' ) && wcs_order_contains_subscription( $order );
+	}
+
+	/**
+	 * Check if cart contains a subscription.
+	 */
+	public function cart_contains_subscription(): bool {
+		return class_exists( 'WC_Subscriptions_Cart' ) && WC_Subscriptions_Cart::cart_contains_subscription();
+	}
+
+	/**
+	 * Get API installments URL.
+	 *
+	 * @return string API installments URL.
+	 */
+	public function get_api_installments_url(): string {
+		return WooCommerce::instance()->api_request_url( $this->id . '_installments' );
+	}
+
+	/**
+	 * Get API 3DS session URL.
+	 *
+	 * @return string API 3DS session URL.
+	 */
+	public function get_api_3ds_session_url(): string {
+		return WooCommerce::instance()->api_request_url( $this->id . '_3ds_session' );
+	}
+
+	/**
+	 * Get 3DS session for authentication.
+	 */
+	public function get_3ds_session(): void {
+		$nonce = isset( $_GET['nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['nonce'] ) ) : null;
+
+		if ( ! wp_verify_nonce( $nonce, 'pagbank_get_3ds_session' ) ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'Nonce inválido.', 'pagbank-for-woocommerce' ),
+				),
+				400
+			);
+			return;
+		}
+
+		if ( false === $this->threeds_enabled ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'A autenticação 3DS não está habilitada.', 'pagbank-for-woocommerce' ),
+				),
+				400
+			);
+			return;
+		}
+
+		$session_response = $this->api->create_3ds_session();
+
+		if ( is_wp_error( $session_response ) ) {
+			wp_send_json_error(
+				array(
+					'message' => $session_response->get_error_message(),
+				),
+				500
+			);
+			return;
+		}
+
+		wp_send_json_success(
+			array(
+				'session'    => $session_response['session'],
+				'expires_at' => $session_response['expires_at'],
+				'env'        => $this->environment === 'production' ? 'PROD' : 'SANDBOX',
+			)
+		);
+	}
+
+	/**
+	 * Process order payment.
+	 *
+	 * @param int $order_id Order ID.
+	 *
+	 * @throws Exception When an error occurs.
+	 */
+	public function process_payment( $order_id ): array {
+		try {
+
+			$order                       = wc_get_order( $order_id );
+			$order_contains_subscription = $this->order_contains_subscription( $order );
+
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$payment_token = isset( $_POST[ 'wc-' . $this->id . '-payment-token' ] ) ? wc_clean( wp_unslash( $_POST[ 'wc-' . $this->id . '-payment-token' ] ) ) : null;
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$encrypted_card = isset( $_POST[ $this->card_field_prefix . '-encrypted-card' ] ) ? wc_clean( wp_unslash( $_POST[ $this->card_field_prefix . '-encrypted-card' ] ) ) : null;
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$card_holder = isset( $_POST[ $this->card_field_prefix . '-card-holder' ] ) ? wc_clean( wp_unslash( $_POST[ $this->card_field_prefix . '-card-holder' ] ) ) : null;
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$card_bin = isset( $_POST[ $this->card_field_prefix . '-card-bin' ] ) ? wc_clean( wp_unslash( $_POST[ $this->card_field_prefix . '-card-bin' ] ) ) : null;
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$save_card_field = 'wc-' . $this->id . '-new-payment-method';
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$save_card_value = isset( $_POST[ $save_card_field ] ) ? wc_clean( wp_unslash( $_POST[ $save_card_field ] ) ) : '';
+			$is_new_card     = $payment_token === null || $payment_token === 'new';
+			$save_card       = $is_new_card && ( $save_card_value === 'true' || $save_card_value === '1' );
+			// Debit cards have no installments.
+			if ( $this->card_type === 'DEBIT_CARD' ) {
+				$installments = 1;
+			} else {
+				$installments_field = $this->card_field_prefix . '-installments';
+				// phpcs:ignore WordPress.Security.NonceVerification.Missing
+				$installments_post = isset( $_POST[ $installments_field ] ) ? (int) wc_clean( wp_unslash( $_POST[ $installments_field ] ) ) : 1;
+				$installments      = $order_contains_subscription ? 1 : $installments_post;
+			}
+			$cvc_field = $this->card_field_prefix . '-card-cvc';
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$cvc_post = isset( $_POST[ $cvc_field ] ) ? wc_clean( wp_unslash( $_POST[ $cvc_field ] ) ) : null;
+			$cvc      = $order_contains_subscription ? $cvc_post : null;
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$threeds_id = isset( $_POST[ $this->card_field_prefix . '-threeds-id' ] ) ? wc_clean( wp_unslash( $_POST[ $this->card_field_prefix . '-threeds-id' ] ) ) : null;
+
+			$transfer_of_interest_fee = null;
+
+			if ( $this->card_type === 'CREDIT_CARD' && $this->installments_enabled && $this->transfer_of_interest_enabled ) {
+				$amount_in_cents    = Helpers::format_money_cents( $order->get_total() );
+				$is_new_credit_card = null === $payment_token || 'new' === $payment_token;
+
+				if ( ! $is_new_credit_card ) {
+					/**
+					 * Convert to PaymentToken.
+					 *
+					 * @var PaymentToken
+					 */
+					$token = WC_Payment_Tokens::get( $payment_token );
+
+					if ( $token === null ) {
+						wc_add_notice( __( 'O token de pagamento é inválido.', 'pagbank-for-woocommerce' ), 'error' );
+
+						return array(
+							'result'  => 'failure',
+							'message' => __( 'O token de pagamento é inválido.', 'pagbank-for-woocommerce' ),
+						);
+					}
+
+					$card_bin    = $token->get_bin();
+					$card_holder = $token->get_holder();
+				}
+
+				$charge_fees = $this->api->charge_fees( $amount_in_cents, $this->maximum_installments, $this->maximum_installments_interest_free, $card_bin );
+
+				if ( is_wp_error( $charge_fees ) ) {
+					wc_add_notice( __( 'Erro ao obter o plano de parcelamento.', 'pagbank-for-woocommerce' ), 'error' );
+
+					return array(
+						'result'  => 'failure',
+						'message' => __( 'Erro ao obter o plano de parcelamento.', 'pagbank-for-woocommerce' ),
+					);
+				}
+
+				$key                = array_key_first( $charge_fees['payment_methods']['credit_card'] );
+				$installments_plans = $charge_fees['payment_methods']['credit_card'][ $key ]['installment_plans'];
+				$matched_plan       = null;
+
+				foreach ( $installments_plans as $installments_plan ) {
+					if ( $installments_plan['installments'] === $installments ) {
+						$matched_plan = $installments_plan;
+						break;
+					}
+				}
+
+				if ( $matched_plan === null ) {
+					wc_add_notice( __( 'O plano de parcelamento não foi encontrado.', 'pagbank-for-woocommerce' ), 'error' );
+
+					return array(
+						'result'  => 'failure',
+						'message' => __( 'O plano de parcelamento não foi encontrado.', 'pagbank-for-woocommerce' ),
+					);
+				}
+
+				$transfer_of_interest_fee = $matched_plan['amount'];
+			}
+
+			$is_empty_order_with_subscription = $order_contains_subscription && Helpers::format_money_cents( $order->get_total() ) === 0;
+
+			$data = $is_empty_order_with_subscription ? ApiHelpers::get_card_payment_data_for_empty_value_subscription(
+				$this,
+				$order,
+				$payment_token,
+				$encrypted_card,
+				$card_holder,
+				$order_contains_subscription ? true : $save_card, // Force save card when it's subscription.
+				$cvc,
+				$order_contains_subscription,
+				$installments,
+				$transfer_of_interest_fee,
+				$threeds_id
+			) : ApiHelpers::get_card_payment_data(
+				$this,
+				$order,
+				$payment_token,
+				$encrypted_card,
+				$card_holder,
+				$order_contains_subscription ? true : $save_card, // Force save card when it's subscription.
+				$cvc,
+				$order_contains_subscription,
+				$installments,
+				$transfer_of_interest_fee,
+				$threeds_id
+			);
+
+			$response = $this->api->create_order( $data, ApiHelpers::get_create_order_idempotency_key( $data, $order->get_id() ) );
+
+			if ( is_wp_error( $response ) ) {
+				wc_add_notice( __( 'Houve um erro durante o pagamento. Tente novamente.', 'pagbank-for-woocommerce' ), 'error' );
+
+				return array(
+					'result'  => 'failure',
+					'message' => __( 'Houve um erro durante o pagamento. Tente novamente.', 'pagbank-for-woocommerce' ),
+				);
+			}
+
+			$charge = $response['charges'][0];
+
+			if ( $is_empty_order_with_subscription ) {
+				$refund_amount   = Helpers::format_money_from_cents( $charge['amount']['value'] );
+				$refund_response = $this->api->refund(
+					$charge['id'],
+					$refund_amount,
+					ApiHelpers::get_refund_idempotency_key( $charge['id'], $refund_amount )
+				);
+
+				if ( is_wp_error( $refund_response ) ) {
+					wc_add_notice( __( 'Houve um erro durante o reembolso da cobrança inicial. Contate o administrador.', 'pagbank-for-woocommerce' ), 'error' );
+
+					return array(
+						'result'  => 'failure',
+						'message' => __( 'Houve um erro durante o reembolso da cobrança inicial. Contate o administrador.', 'pagbank-for-woocommerce' ),
+					);
+				}
+			}
+
+			if ( $charge['status'] === 'IN_ANALYSIS' ) {
+				$order->update_status( 'on-hold', __( 'O PagBank está analisando a transação.', 'pagbank-for-woocommerce' ) );
+			} elseif ( $charge['status'] === 'DECLINED' ) {
+				wc_add_notice( __( 'O pagamento foi recusado.', 'pagbank-for-woocommerce' ), 'error' );
+
+				return array(
+					'result'  => 'failure',
+					'message' => __( 'O pagamento foi recusado.', 'pagbank-for-woocommerce' ),
+				);
+			} elseif ( $charge['status'] !== 'PAID' ) {
+				wc_add_notice( __( 'Houve um erro no pagamento. Por favor, entre em contato com o suporte.', 'pagbank-for-woocommerce' ), 'error' );
+
+				return array(
+					'result'  => 'failure',
+					'message' => __( 'Houve um erro no pagamento. Por favor, entre em contato com o suporte.', 'pagbank-for-woocommerce' ),
+				);
+			}
+
+			$card_payment_token = null;
+
+			if ( ( $save_card || $order_contains_subscription ) && isset( $charge['payment_method']['card']['id'] ) ) {
+				$card_payment_token = $this->save_card( $order, $charge['payment_method']['card'], $save_card ); // Attach user only when it's saving card for the user.
+			}
+
+			$this->save_order_meta_data( $order, $response, $data, $card_payment_token );
+
+			$charge_id = $charge['id'];
+
+			$order->payment_complete( $charge_id );
+
+			if ( $charge['status'] === 'PAID' ) {
+				do_action( 'pagbank_order_completed', $order );
+			}
+
+			if ( $this->environment === 'production' ) {
+				$charge_url = 'https://minhaconta.pagseguro.uol.com.br/transacao/detalhes/' . str_replace( 'CHAR_', '', $charge_id );
+				// phpcs:disable Generic.Files.LineLength -- Translation string cannot be split.
+				$order->add_order_note(
+					sprintf(
+						/* translators: 1: charge ID, 2: installments, 3: card brand, 4: card last 4 digits, 5: PagBank charge URL. */
+						__( '<b>Cobrança:</b> %1$s.<br><b>Parcelas:</b> %2$d.<br><b>Bandeira do cartão:</b> %3$s.<br><b>Últimos 4 dígitos do cartão:</b> %4$s.<br><a href="%5$s" target="_blank" rel="noreferrer">Visualizar pagamento no PagBank</a>', 'pagbank-for-woocommerce' ),
+				// phpcs:enable Generic.Files.LineLength
+						esc_html( $charge['id'] ),
+						(int) $charge['payment_method']['installments'],
+						esc_html( $charge['payment_method']['card']['brand'] ),
+						esc_html( $charge['payment_method']['card']['last_digits'] ),
+						esc_url( $charge_url )
+					),
+					false
+				);
+			}
+
+			return array(
+				'result'   => 'success',
+				'redirect' => $this->get_return_url( $order ),
+			);
+		} catch ( Exception $e ) {
+			wc_add_notice( $e->getMessage(), 'error' );
+
+			return array(
+				'result'  => 'failure',
+				'message' => $e->getMessage(),
+			);
+		}
+	}
+
+	/**
+	 * Save credit card token.
+	 *
+	 * @param WC_Order $order Order object.
+	 * @param array    $data  Credit card data.
+	 * @param bool     $attach_user_id  Attach user ID.
+	 */
+	private function save_card( WC_Order $order, array $data, bool $attach_user_id = true ): PaymentToken {
+		$token        = new PaymentToken();
+		$connect_data = $this->connect->get_data();
+
+		$token->set_holder( $data['holder']['name'] );
+		$token->set_bin( $data['first_digits'] );
+		$token->set_token( $data['id'] );
+		$token->set_card_type( $data['brand'] );
+		$token->set_last4( $data['last_digits'] );
+		$token->set_expiry_month( $data['exp_month'] );
+		$token->set_expiry_year( $data['exp_year'] );
+		$token->set_gateway_id( $this->id );
+		$token->set_connect_account_id( $connect_data['account_id'] );
+		switch ( $this->card_type ) {
+			case 'CREDIT_CARD':
+				$token->set_type( PaymentToken::TYPE_CREDIT_CARD );
+				break;
+			case 'DEBIT_CARD':
+				$token->set_type( PaymentToken::TYPE_DEBIT_CARD );
+				break;
+		}
+
+		if ( $attach_user_id ) {
+			$token->set_user_id( $order->get_user_id() );
+		}
+
+		$token->save();
+
+		return $token;
+	}
+
+	/**
+	 * Save order meta data.
+	 *
+	 * @param WC_Order          $order Order object.
+	 * @param array             $response Response data.
+	 * @param array             $request Request data.
+	 * @param PaymentToken|null $payment_token Payment token.
+	 */
+	private function save_order_meta_data( WC_Order $order, array $response, array $request, ?PaymentToken $payment_token ): void {
+		$charge = $response['charges'][0];
+
+		$order->update_meta_data( '_pagbank_order_id', $response['id'] );
+		$order->update_meta_data( '_pagbank_charge_id', $charge['id'] );
+
+		$order->update_meta_data( '_' . $this->card_field_prefix . '_brand', $charge['payment_method']['card']['brand'] );
+		if ( isset( $charge['payment_method']['installments'] ) ) {
+			$order->update_meta_data( '_' . $this->card_field_prefix . '_installments', $charge['payment_method']['installments'] );
+		}
+		$order->update_meta_data( '_pagbank_environment', $this->environment );
+
+		if ( $payment_token && function_exists( 'wcs_get_subscriptions_for_order' ) ) {
+			$subscriptions = wcs_get_subscriptions_for_order( $order );
+
+			foreach ( $subscriptions as $subscription ) {
+				$subscription->update_meta_data( '_pagbank_payment_token_id', $payment_token->get_id() );
+
+				$subscription->save();
+			}
+		}
+
+		$order->save_meta_data();
+
+		if ( isset( $charge['amount']['fees'] ) ) {
+			$interest_fee = new WC_Order_Item_Fee();
+			$amount       = $charge['amount']['fees']['buyer']['interest']['total'] / 100;
+
+			$interest_fee->set_name( __( 'Parcelamento', 'pagbank-for-woocommerce' ) );
+			$interest_fee->set_amount( $amount );
+			$interest_fee->set_tax_class( '' );
+			$interest_fee->set_tax_status( 'none' );
+			$interest_fee->set_total( $amount );
+
+			$order->add_item( $interest_fee );
+			$order->calculate_totals();
+			$order->save();
+		}
+	}
+
+	/**
+	 * Process a refund.
+	 *
+	 * @param int         $order_id Order ID.
+	 * @param string|null $amount   Refund amount.
+	 * @param string      $reason   Refund reason.
+	 *
+	 * @return bool|WP_Error
+	 */
+	public function process_refund( $order_id, $amount = null, $reason = '' ) {
+		$order                       = wc_get_order( $order_id );
+		$should_process_order_refund = apply_filters( 'pagbank_should_process_order_refund', true, $order );
+
+		if ( is_wp_error( $should_process_order_refund ) ) {
+			return $should_process_order_refund;
+		}
+
+		if ( $should_process_order_refund === true ) {
+			return ApiHelpers::process_order_refund( $this->api, $order, $amount, $reason );
+		}
+
+		return new WP_Error( 'error', __( 'Houve um erro desconhecido ao tentar realizar o reembolso.', 'pagbank-for-woocommerce' ) );
+	}
+
+	/**
+	 * Check if gateway needs setup.
+	 */
+	public function needs_setup(): bool {
+		$is_connected = (bool) $this->connect->get_data();
+
+		return ! $is_connected;
+	}
+
+	/**
+	 * Check if gateway is available for use.
+	 */
+	public function is_available(): bool {
+		$is_available = ( 'yes' === $this->enabled );
+
+		if ( ! $is_available ) {
+			return false;
+		}
+
+		if ( WC()->cart && 0 < $this->get_order_total() && 0 < $this->max_amount && $this->max_amount < $this->get_order_total() ) {
+			return false;
+		}
+
+		$is_connected          = (bool) $this->connect->get_data();
+		$is_brazilian_currency = get_woocommerce_currency() === 'BRL';
+
+		if ( ! $is_connected || ! $is_brazilian_currency ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Add errors in case of some validation error that will appear during the checkout.
+	 */
+	public function is_available_validation(): void {
+		$is_enabled            = ( 'yes' === $this->enabled );
+		$is_connected          = (bool) $this->connect->get_data();
+		$is_brazilian_currency = get_woocommerce_currency() === 'BRL';
+
+		$errors = array();
+
+		if ( ! $is_enabled ) {
+			$errors[] = __( '- O método de pagamento está desabilitado.', 'pagbank-for-woocommerce' );
+		}
+
+		if ( ! $is_connected ) {
+			$errors[] = __( '- A sua conta PagBank não está conectada.', 'pagbank-for-woocommerce' );
+		}
+
+		if ( ! $is_brazilian_currency ) {
+			$errors[] = __( '- A moeda da loja não é BRL.', 'pagbank-for-woocommerce' );
+		}
+
+		if ( $errors ) {
+			array_unshift( $errors, __( 'Alguns errors podem estar impedindo o método de pagamento de ser exibido durante o checkout:', 'pagbank-for-woocommerce' ) );
+
+			$this->add_error( implode( '<br />', $errors ) );
+		}
+	}
+
+	/**
+	 * Generate HTML settings HTML with errors.
+	 *
+	 * @param array $form_fields The form fields to display.
+	 * @param bool  $echo_output Should echo or return.
+	 *
+	 * @return string If $echo_output = false, return the HTML content.
+	 */
+	public function generate_settings_html( $form_fields = array(), $echo_output = true ): string {
+		ob_start();
+		$this->display_errors();
+		$html = ob_get_clean();
+
+		if ( $echo_output ) {
+			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- XSS ok.
+			echo $html . parent::generate_settings_html( $form_fields, $echo_output );
+
+			return '';
+		} else {
+			return $html . parent::generate_settings_html( $form_fields, $echo_output );
+		}
+	}
+
+	/**
+	 * Process recurring payment.
+	 *
+	 * @param string   $amount Amount.
+	 * @param WC_Order $renewal_order Renewal order.
+	 *
+	 * @throws Exception When an error occurs.
+	 */
+	public function scheduled_subscription_payment( string $amount, WC_Order $renewal_order ): void {
+		try {
+			$payment_token = $renewal_order->get_meta( '_pagbank_payment_token_id' );
+			$token         = WC_Payment_Tokens::get( $payment_token );
+
+			if ( ! $payment_token || ! $token ) {
+				throw new Exception( 'Token de pagamento não encontrado.' );
+			}
+
+			$data = ApiHelpers::get_card_renewal_payment_data(
+				$this,
+				$renewal_order,
+				$token,
+				$amount
+			);
+
+			$response = $this->api->create_order( $data, ApiHelpers::get_create_order_idempotency_key( $data, $renewal_order->get_id() ) );
+
+			if ( is_wp_error( $response ) ) {
+				throw new Exception( 'Houve um erro no pagamento da renovação.' );
+			}
+
+			$charge = $response['charges'][0];
+
+			if ( $charge['status'] === 'IN_ANALYSIS' ) {
+				$renewal_order->update_status( 'on-hold', __( 'O PagBank está analisando a transação.', 'pagbank-for-woocommerce' ) );
+			} elseif ( $charge['status'] === 'DECLINED' ) {
+				wc_add_notice( __( 'O pagamento foi recusado.', 'pagbank-for-woocommerce' ), 'error' );
+				return;
+			} elseif ( $charge['status'] !== 'PAID' ) {
+				wc_add_notice( __( 'Houve um erro no pagamento. Por favor, entre em contato com o suporte.', 'pagbank-for-woocommerce' ), 'error' );
+				return;
+			}
+
+			$this->save_order_meta_data( $renewal_order, $response, $data, null );
+
+			$renewal_order->payment_complete( $charge['id'] );
+
+			WC_Subscriptions_Manager::process_subscription_payments_on_order( $renewal_order );
+		} catch ( Exception $ex ) {
+			WC_Subscriptions_Manager::process_subscription_payment_failure_on_order( $renewal_order );
+		}
+	}
+}
