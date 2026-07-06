@@ -7,7 +7,7 @@ Informação — Instituto Federal Sudeste de Minas Gerais). Construída com
 
 📦 **Download do projeto completo (zip com todos os arquivos, incluindo o
 banco de dados):**
-[Google Drive](https://drive.google.com/file/d/1daaa26efwciZBZ3O_L7KWLr4GfxXJfMK/view?usp=share_link)
+[Google Drive](https://drive.google.com/drive/folders/1zfYwvx1IPk5Kbcd5NcdMbx24yIBXDn8d)
 *(o `.zip` não é versionado neste repositório por exceder o limite de tamanho
 de arquivo do GitHub — veja `.gitignore`)*
 
